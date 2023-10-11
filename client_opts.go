@@ -159,18 +159,6 @@ func WithPullSnapshotter(snapshotterName string, opts ...snapshots.Opt) RemoteOp
 	}
 }
 
-// WithPullLabel sets a label to be associated with a pulled reference
-func WithPullLabel(key, value string) RemoteOpt {
-	return func(_ *Client, rc *RemoteContext) error {
-		if rc.Labels == nil {
-			rc.Labels = make(map[string]string)
-		}
-
-		rc.Labels[key] = value
-		return nil
-	}
-}
-
 // WithPullLabels associates a set of labels to a pulled reference
 func WithPullLabels(labels map[string]string) RemoteOpt {
 	return func(_ *Client, rc *RemoteContext) error {
