@@ -22,6 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -84,6 +87,75 @@ func MakeRefKey(ctx context.Context, desc ocispec.Descriptor) string {
 		log.G(ctx).Warnf("reference for unknown type: %s", desc.MediaType)
 		return "unknown-" + key
 	}
+}
+
+func RangeFetchHandler(ingester content.Ingester, fetcher Fetcher) images.HandlerFunc {
+	return func(ctx context.Context, desc ocispec.Descriptor) ([]ocispec.Descriptor, error) {
+		ctx = log.WithLogger(ctx, log.G(ctx).WithFields(log.Fields{
+			"digest":    desc.Digest,
+			"mediatype": desc.MediaType,
+			"size":      desc.Size,
+		}))
+
+		if desc.MediaType == images.MediaTypeDockerSchema1Manifest {
+			return nil, fmt.Errorf("%v not supported", desc.MediaType)
+		}
+		err := RangeFetch(ctx, ingester, fetcher, desc)
+		if errdefs.IsAlreadyExists(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+}
+
+func RangeFetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc ocispec.Descriptor) error {
+	// get total size:  desc.size, chunk is 64Mb, fragment is: size/chunk and then concurrent copy data to write
+	log.G(ctx).Info("fetch")
+	var queue, redo, finish chan int
+	var (
+		cor    int   = 10
+		size   int   = 32 * 1024 * 1024
+		length int64 = desc.Size
+		_, dst       = filepath.Split(desc.URLs[0])
+	)
+	fragment := int(math.Ceil(float64(length) / float64(size)))
+	queue = make(chan int, cor)
+	redo = make(chan int, int(math.Floor(float64(cor)/2)))
+	go func() {
+		for i := 0; i < fragment; i++ {
+			queue <- i
+		}
+		for {
+			j := <-redo
+			queue <- j
+		}
+	}()
+	finish = make(chan int, cor)
+	for j := 0; j < cor; j++ {
+		//go Do(request, fragment, j)
+	}
+	for k := 0; k < fragment; k++ {
+		_ = <-finish
+		//log.Printf("[%s][%d]Finished\n", "-", i)
+	}
+	file, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	var offset int64 = 0
+
+	for x := 0; x < fragment; x++ {
+		filename := fmt.Sprintf("%s_%d", dst, x)
+		buf, err := os.ReadFile(filename)
+		if err != nil {
+			continue
+		}
+		file.WriteAt(buf, offset)
+		offset += int64(len(buf))
+		os.Remove(filename)
+	}
+	return nil
 }
 
 // FetchHandler returns a handler that will fetch all content into the ingester
